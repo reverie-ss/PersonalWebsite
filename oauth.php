@@ -1,68 +1,105 @@
 <?php
-//------------------------------
-// Display an authorization page
-//------------------------------
-if($_SERVER['REQUEST_METHOD'] == 'GET') {
-    file_put_contents('/tmp/redirectUrl', $_GET['success_call_back']);
-?>
-<html>
-<head></head>
-<body>
-<form action="/oauth.php" method="post">
-    <p>Click Authorize to get your app connected son!</p>
-    <input type="hidden" name="authorized" value="yes"/>
-    <input type="submit" value="Authorize"/>
-</body>
-<?php
-} elseif($_SERVER['REQUEST_METHOD']) {
-    //-----------------------------------
-    // Capture OAuth info sent by Magento
-    //-----------------------------------
-    if(isset($_POST['oauth_consumer_key'])) {
-        // Configuration
-        $data['mageUrl']        = $_POST['http://dev.myclickbazaar.com'];
-        $data['consumerKey']    = $_POST['a0fad51a6016beb7b397650fe76028b1'];
-        $data['consumerSecret'] = $_POST['caf5c8358d3f0e64120bdf105b46cd29'];
-        $data['verifier']       = $_POST['oauth_verifier'];
-        file_put_contents('/tmp/oauth-info', serialize($data));
-    }
-
-    //---------------------------------------------
-    // We have approval, let's get the access token
-    //---------------------------------------------
-    elseif(isset($_POST['authorized']) && $_POST['authorized'] == 'yes') {
-        $data = unserialize(file_get_contents('/tmp/oauth-info'));
-        $requestTokenRequestUrl = $data['mageUrl'] . 'oauth/token/request';
-        $accessTokenRequestUrl  = $data['mageUrl'] . 'oauth/token/access';
-
-        // Instantiate the OAuth client
-        $oauthClient = new OAuth($data['consumerKey'], $data['consumerSecret']);
-
-        try {
-            // Fetch a request token and redirect to the magento site for authorization
-            $requestToken = $oauthClient->getRequestToken($requestTokenRequestUrl);
-
-            // Fetch an access token
-            $oauthClient->setToken($requestToken['oauth_token'], $requestToken['oauth_token_secret']);
-            $accessToken = $oauthClient->getAccessToken($accessTokenRequestUrl, null, $data['verifier']);
-
-            // Redirect to Magento
-            $redirectUrl = trim(file_get_contents('/tmp/redirectUrl'));
-            unlink('/tmp/redirectUrl');
-            unlink('/tmp/oauth-info');
-
-            header('Location: ' . $redirectUrl);
-        } catch (OAuthException $e) {
-            ob_start();
-            var_dump($e);
-            $details = ob_get_clean();
-            echo '<pre>';
-            echo '<h2>Error Message</h2>';
-            echo $e->getMessage();
-            echo '<hr><h3>Details</h3>';
-            echo $details;
-            echo '</pre>';
-        }
-    }
+/**
+ * Copyright Magento 2012
+ * Example of products list retrieve using Customer account via Magento
+REST API. OAuth authorization is used
+ */
+$callbackUrl = "https://reverie-ss.github.io/oauth.php";
+$temporaryCredentialsRequestUrl =
+"http://dev.myclickbazaar.com/oauth/initiate?oauth_callback=" .
+urlencode($callbackUrl);
+$adminAuthorizationUrl = 'http://dev.myclickbazaar.com/oauth/authorize';
+$accessTokenRequestUrl = 'http://dev.myclickbazaar.com/oauth/token';
+$apiUrl = 'http://dev.myclickbazaar.com/api/rest';
+$consumerKey = 'a0fad51a6016beb7b397650fe76028b1';
+$consumerSecret = 'caf5c8358d3f0e64120bdf105b46cd29';
+session_start();
+if (!isset($_GET['oauth_token']) && isset($_SESSION['state']) &&
+$_SESSION['state'] == 1) {
+   $_SESSION['state'] = 0;
 }
-</html>
+try {
+   $authType = ($_SESSION['state'] == 2) ? OAUTH_AUTH_TYPE_AUTHORIZATION
+: OAUTH_AUTH_TYPE_URI;
+   $oauthClient = new OAuth($consumerKey, $consumerSecret,
+OAUTH_SIG_METHOD_HMACSHA1, $authType);
+   $oauthClient->enableDebug();
+   if (!isset($_GET['oauth_token']) && !$_SESSION['state']) {
+       $requestToken =
+$oauthClient->getRequestToken($temporaryCredentialsRequestUrl);
+       $_SESSION['secret'] = $requestToken['oauth_token_secret'];
+       $_SESSION['state'] = 1;
+       header('Location: ' . $adminAuthorizationUrl . '?oauth_token=' .
+$requestToken['oauth_token']);
+       exit;
+   } else if ($_SESSION['state'] == 1) {
+       $oauthClient->setToken($_GET['oauth_token'], $_SESSION['secret']);
+       $accessToken =
+$oauthClient->getAccessToken($accessTokenRequestUrl);
+       $_SESSION['state'] = 2;
+       $_SESSION['token'] = $accessToken['oauth_token'];
+       $_SESSION['secret'] = $accessToken['oauth_token_secret'];
+       header('Location: ' . $callbackUrl);
+       exit;
+   } else {
+       $oauthClient->setToken($_SESSION['token'], $_SESSION['secret']);
+       $resourceUrl = "$apiUrl/products";
+       $oauthClient->fetch($resourceUrl);
+       $productsList = json_decode($oauthClient->getLastResponse());
+       print_r($productsList);
+   }
+} catch (OAuthException $e) {
+   print_r($e);
+}
+<?php
+/**
+ * Example of products list retrieve using admin account via Magento REST
+API. oAuth authorization is used
+ */
+$callbackUrl = "http://yourhost/oauth_admin.php";
+$temporaryCredentialsRequestUrl =
+"http://dev.myclickbazaar.com/oauth/initiate?oauth_callback=" .
+urlencode($callbackUrl);
+$adminAuthorizationUrl = 'http://dev.myclickbazaar.com/admin/oAuth_authorize';
+$accessTokenRequestUrl = 'http://dev.myclickbazaar.com/oauth/token';
+$apiUrl = 'http://dev.myclickbazaar.com/api/rest';
+$consumerKey = 'yourconsumerkey';
+$consumerSecret = 'yourconsumersecret';
+session_start();
+if (!isset($_GET['oauth_token']) && isset($_SESSION['state']) &&
+$_SESSION['state'] == 1) {
+   $_SESSION['state'] = 0;
+}
+try {
+   $authType = ($_SESSION['state'] == 2) ? OAUTH_AUTH_TYPE_AUTHORIZATION
+: OAUTH_AUTH_TYPE_URI;
+   $oauthClient = new OAuth($consumerKey, $consumerSecret,
+OAUTH_SIG_METHOD_HMACSHA1, $authType);
+   $oauthClient->enableDebug();
+   if (!isset($_GET['oauth_token']) && !$_SESSION['state']) {
+       $requestToken =
+$oauthClient->getRequestToken($temporaryCredentialsRequestUrl);
+       $_SESSION['secret'] = $requestToken['oauth_token_secret'];
+       $_SESSION['state'] = 1;
+       header('Location: ' . $adminAuthorizationUrl . '?oauth_token=' .
+$requestToken['oauth_token']);
+       exit;
+   } else if ($_SESSION['state'] == 1) {
+       $oauthClient->setToken($_GET['oauth_token'], $_SESSION['secret']);
+       $accessToken =
+$oauthClient->getAccessToken($accessTokenRequestUrl);
+       $_SESSION['state'] = 2;
+       $_SESSION['token'] = $accessToken['oauth_token'];
+       $_SESSION['secret'] = $accessToken['oauth_token_secret'];
+       header('Location: ' . $callbackUrl);
+       exit;
+   } else {
+       $oauthClient->setToken($_SESSION['token'], $_SESSION['secret']);
+       $resourceUrl = "$apiUrl/products";
+       $oauthClient->fetch($resourceUrl);
+       $productsList = json_decode($oauthClient->getLastResponse());
+       print_r($productsList);
+   }
+} catch (OAuthException $e) {
+   print_r($e);
+}
